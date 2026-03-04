@@ -5,11 +5,13 @@ import timm
 from transformers import AutoModel
 import torch.nn.functional as F
 
+
 class FusionBinaryClassifier(nn.Module):
     """
     Image encoder (ResNet18) + Text encoder (DistilBERT)
-    -> concat features -> MLP -> logits(2)
+    -> L2 normalize -> concat -> MLP -> logits(2)
     """
+
     def __init__(
         self,
         image_backbone="resnet18",
@@ -17,6 +19,9 @@ class FusionBinaryClassifier(nn.Module):
         dropout=0.2,
         freeze_image=False,
         freeze_text=False,
+        unfreeze_resnet_last_stage=False,   # unfreeze ResNet last stage (layer4)
+        unfreeze_bert_last_n_layers=0,      # unfreeze last layer of DistilBERT
+        unfreeze_bert_layer_norm=True,      # also unfreeze final layer_norm if any layer is unfrozen
     ):
         super().__init__()
 
@@ -33,15 +38,61 @@ class FusionBinaryClassifier(nn.Module):
         self.text_encoder = AutoModel.from_pretrained(text_backbone)
         txt_dim = self.text_encoder.config.hidden_size  # DistilBERT: 768
 
+        # --------- freezing / partial unfreezing ----------
+        def freeze_module(m: nn.Module):
+            for p in m.parameters():
+                p.requires_grad = False
+
+        def unfreeze_module(m: nn.Module):
+            for p in m.parameters():
+                p.requires_grad = True
+
+        # 1) Apply full freeze if requested
         if freeze_image:
-            for p in self.image_encoder.parameters():
-                p.requires_grad = False
+            freeze_module(self.image_encoder)
         if freeze_text:
-            for p in self.text_encoder.parameters():
-                p.requires_grad = False
+            freeze_module(self.text_encoder)
 
+        # 2) Partial unfreeze (only if not fully frozen)
+        # ---- ResNet: unfreeze last stage ----
+        if (not freeze_image) and unfreeze_resnet_last_stage:
+            # Start from frozen baseline for stability
+            freeze_module(self.image_encoder)
+
+            # timm resnet usually has .layer4; if not, we raise a clear error
+            if hasattr(self.image_encoder, "layer4"):
+                unfreeze_module(self.image_encoder.layer4)
+            else:
+                raise AttributeError(
+                    f"image_encoder ({type(self.image_encoder)}) has no attribute 'layer4'. "
+                    f"Print model to find the last stage name for backbone='{image_backbone}'."
+                )
+
+        # ---- DistilBERT: unfreeze last N layers ----
+        if (not freeze_text) and (unfreeze_bert_last_n_layers and unfreeze_bert_last_n_layers > 0):
+            freeze_module(self.text_encoder)
+
+            # DistilBERT layers are usually at: model.transformer.layer (len=6)
+            if hasattr(self.text_encoder, "transformer") and hasattr(self.text_encoder.transformer, "layer"):
+                layers = self.text_encoder.transformer.layer
+                n_total = len(layers)
+                n = int(unfreeze_bert_last_n_layers)
+                n = max(1, min(n, n_total))  # clamp to [1, n_total]
+
+                for layer in layers[-n:]:
+                    unfreeze_module(layer)
+
+                # unfreeze final layer norm to help adaptation
+                if unfreeze_bert_layer_norm and hasattr(self.text_encoder.transformer, "layer_norm"):
+                    unfreeze_module(self.text_encoder.transformer.layer_norm)
+            else:
+                raise AttributeError(
+                    f"text_encoder ({type(self.text_encoder)}) does not expose transformer.layer. "
+                    f"Backbone='{text_backbone}' may not be DistilBERT-like."
+                )
+
+        # --------- classifier head ----------
         fused_dim = img_dim + txt_dim
-
         self.classifier = nn.Sequential(
             nn.Linear(fused_dim, 512),
             nn.ReLU(),
@@ -51,14 +102,12 @@ class FusionBinaryClassifier(nn.Module):
 
     def forward(self, images, input_ids, attention_mask):
         img_feat = self.image_encoder(images)  # [B, img_dim]
-        #  normalize!
-        img_feat = F.normalize(img_feat, p=2, dim=1)
+        img_feat = F.normalize(img_feat, p=2, dim=1)     # L2 norm
 
         out = self.text_encoder(input_ids=input_ids, attention_mask=attention_mask)
-        txt_feat = out.last_hidden_state[:, 0, :]  # [B, txt_dim] (CLS token)
-        #  normalize!
-        txt_feat = F.normalize(txt_feat, p=2, dim=1)
-        
-        fused = torch.cat([img_feat, txt_feat], dim=1)  # [B, fused_dim]
-        logits = self.classifier(fused)                 # [B, 2]
+        txt_feat = out.last_hidden_state[:, 0, :]        # [B, txt_dim] (CLS token)
+        txt_feat = F.normalize(txt_feat, p=2, dim=1)     # L2 norm
+
+        fused = torch.cat([img_feat, txt_feat], dim=1)   # [B, fused_dim]
+        logits = self.classifier(fused)                  # [B, 2]
         return logits

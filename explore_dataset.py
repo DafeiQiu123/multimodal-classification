@@ -4,7 +4,6 @@ import random
 from PIL import Image
 import matplotlib.pyplot as plt
 
-# ====== 修改为你的本地数据路径 ======
 DATA_ROOT = r"C:\Users\Administrator\Desktop\toxic\data\hateful_meme"
 IMG_DIR = os.path.join(DATA_ROOT, "img")
 TRAIN_JSON = os.path.join(DATA_ROOT, "train.jsonl")
@@ -27,7 +26,7 @@ def show_samples(json_path, num_samples=3):
     samples = random.sample(data, num_samples)
 
     for i, sample in enumerate(samples):
-        img_rel_path = sample["img"]   # e.g. "img/42953.png"
+        img_rel_path = sample["img"]   
         img_path = os.path.join(DATA_ROOT, img_rel_path)
 
         text = sample["text"]
@@ -39,7 +38,7 @@ def show_samples(json_path, num_samples=3):
         print(f"Text : {text}")
         print(f"Label: {label}")
 
-        # 显示图片
+
         img = Image.open(img_path).convert("RGB")
         plt.figure(figsize=(4, 4))
         plt.imshow(img)
