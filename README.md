@@ -1,4 +1,5 @@
 # multimodal-classification
+1. class weight
 Train and dev are very different
 Train
 pos_ratio = 0.3588
@@ -10,3 +11,6 @@ neg = 250
 pos = 250
 
 We observed that the training set contains 35.9% positive samples, while the validation set is perfectly balanced (50% positive). This distribution shift leads the model to favor the negative class during training, resulting in limited validation accuracy (~55%). To address this, we introduced class-weighted loss to compensate for class imbalance.
+
+2. Group LR
+3. Part-freeze Encoder
