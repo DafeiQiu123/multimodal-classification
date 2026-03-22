@@ -8,7 +8,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from transformers import AutoTokenizer
 
-DATA_ROOT = r"C:\Users\Administrator\Desktop\toxic\data\hateful_meme"
+DATA_ROOT = r"C:\Users\Administrator\Desktop\ai\data\hateful_meme"
 IMG_DIR = os.path.join(DATA_ROOT, "img")
 
 TOKENIZER_NAME = "distilbert-base-uncased"

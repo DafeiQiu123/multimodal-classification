@@ -111,7 +111,7 @@ def main():
     args = parse_args()
     os.makedirs(args.save_dir, exist_ok=True)
 
-    tokenizer = AutoTokenizer.from_pretrained("distilbert-base-uncased")
+    tokenizer = AutoTokenizer.from_pretrained("roberta-base")
 
     train_ds = HatefulMemesDataset(
         args.data_root, split="train",

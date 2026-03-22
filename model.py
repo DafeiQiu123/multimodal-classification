@@ -15,12 +15,12 @@ class FusionBinaryClassifier(nn.Module):
     def __init__(
         self,
         image_backbone="resnet18",
-        text_backbone="distilbert-base-uncased",
+        text_backbone="roberta-base",
         dropout=0.2,
         freeze_image=False,
         freeze_text=False,
         unfreeze_resnet_last_stage=False,   # unfreeze ResNet last stage (layer4)
-        unfreeze_bert_last_n_layers=0,      # unfreeze last layer of DistilBERT
+        unfreeze_bert_last_n_layers=0,      # unfreeze last N layers of text encoder
         unfreeze_bert_layer_norm=True,      # also unfreeze final layer_norm if any layer is unfrozen
     ):
         super().__init__()
@@ -68,28 +68,31 @@ class FusionBinaryClassifier(nn.Module):
                     f"Print model to find the last stage name for backbone='{image_backbone}'."
                 )
 
-        # ---- DistilBERT: unfreeze last N layers ----
+        # ---- Text encoder: unfreeze last N layers ----
         if (not freeze_text) and (unfreeze_bert_last_n_layers and unfreeze_bert_last_n_layers > 0):
             freeze_module(self.text_encoder)
 
-            # DistilBERT layers are usually at: model.transformer.layer (len=6)
-            if hasattr(self.text_encoder, "transformer") and hasattr(self.text_encoder.transformer, "layer"):
-                layers = self.text_encoder.transformer.layer
-                n_total = len(layers)
-                n = int(unfreeze_bert_last_n_layers)
-                n = max(1, min(n, n_total))  # clamp to [1, n_total]
-
-                for layer in layers[-n:]:
-                    unfreeze_module(layer)
-
-                # unfreeze final layer norm to help adaptation
-                if unfreeze_bert_layer_norm and hasattr(self.text_encoder.transformer, "layer_norm"):
-                    unfreeze_module(self.text_encoder.transformer.layer_norm)
+            # RoBERTa/BERT: encoder.layer  |  DistilBERT: transformer.layer
+            if hasattr(self.text_encoder, "encoder") and hasattr(self.text_encoder.encoder, "layer"):
+                layers = self.text_encoder.encoder.layer          # RoBERTa / BERT
+                layer_norm_parent = None                          # RoBERTa has no top-level LN
+            elif hasattr(self.text_encoder, "transformer") and hasattr(self.text_encoder.transformer, "layer"):
+                layers = self.text_encoder.transformer.layer      # DistilBERT
+                layer_norm_parent = self.text_encoder.transformer
             else:
                 raise AttributeError(
-                    f"text_encoder ({type(self.text_encoder)}) does not expose transformer.layer. "
-                    f"Backbone='{text_backbone}' may not be DistilBERT-like."
+                    f"text_encoder ({type(self.text_encoder)}) exposes neither encoder.layer "
+                    f"nor transformer.layer. Backbone='{text_backbone}' is unsupported."
                 )
+
+            n_total = len(layers)
+            n = max(1, min(int(unfreeze_bert_last_n_layers), n_total))
+            for layer in layers[-n:]:
+                unfreeze_module(layer)
+
+            if unfreeze_bert_layer_norm and layer_norm_parent is not None:
+                if hasattr(layer_norm_parent, "layer_norm"):
+                    unfreeze_module(layer_norm_parent.layer_norm)
 
         # --------- classifier head ----------
         fused_dim = img_dim + txt_dim

@@ -15,7 +15,7 @@ class FusionXAttnBinaryClassifier(nn.Module):
     def __init__(
         self,
         image_backbone="resnet18",
-        text_backbone="distilbert-base-uncased",
+        text_backbone="roberta-base",
         num_heads=8,
         dropout=0.3,
         freeze_image=False,
@@ -89,12 +89,22 @@ class FusionXAttnBinaryClassifier(nn.Module):
 
         # partial unfreeze text
         if unfreeze_bert_last_n_layers > 0:
-
             for p in self.text_encoder.parameters():
                 p.requires_grad = False
 
-            layers = self.text_encoder.transformer.layer
-            for layer in layers[-unfreeze_bert_last_n_layers:]:
+            # RoBERTa/BERT: encoder.layer  |  DistilBERT: transformer.layer
+            if hasattr(self.text_encoder, "encoder") and hasattr(self.text_encoder.encoder, "layer"):
+                layers = self.text_encoder.encoder.layer
+            elif hasattr(self.text_encoder, "transformer") and hasattr(self.text_encoder.transformer, "layer"):
+                layers = self.text_encoder.transformer.layer
+            else:
+                raise AttributeError(
+                    f"text_encoder ({type(self.text_encoder)}) exposes neither encoder.layer "
+                    f"nor transformer.layer. Backbone '{text_backbone}' is unsupported."
+                )
+
+            n = max(1, min(unfreeze_bert_last_n_layers, len(layers)))
+            for layer in layers[-n:]:
                 for p in layer.parameters():
                     p.requires_grad = True
 
